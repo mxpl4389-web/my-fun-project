@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Responsive Centipede — Smooth & Touch Follow</title>
+  <style>
+    :root{
+      --bg1: #0f172a;
+      --bg2: #07122b;
+      --ui: rgba(255,255,255,0.9);
+    }
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    body{
+      background: radial-gradient(1200px 600px at 10% 10%, #05243a 0%, transparent 20%),
+                  radial-gradient(1000px 500px at 90% 90%, #10283f 0%, transparent 25%),
+                  linear-gradient(180deg,var(--bg1),var(--bg2));
+      overflow:hidden;
+      color:var(--ui);
+    }
+    canvas{display:block;width:100vw;height:100vh}
+    .hud{
+      position:fixed;left:16px;top:16px;padding:10px 14px;border-radius:12px;
+      background:linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+      backdrop-filter: blur(6px);
+      box-shadow: 0 6px 20px rgba(2,6,23,0.6);
+      color: #e6f3ff;font-size:14px;line-height:1.2;max-width:320px
+    }
+    .hud b{display:block;font-size:15px;margin-bottom:6px}
+    .controls{position:fixed;right:16px;top:16px;background:rgba(255,255,255,0.03);padding:10px;border-radius:10px}
+    .range{width:140px}
+    .footer{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);font-size:13px;color:rgba(255,255,255,0.65)}
+    @media (max-width:600px){
+      .hud{left:10px;right:10px;top:10px;font-size:13px}
+      .controls{right:10px;top:auto;bottom:10px}
+    }
+  </style>
+</head>
+<body>
+  <canvas id="cnv"></canvas>
+
+  <div class="hud">
+    <b>Touch or drag — the centipede will follow!</b>
+    Works on mouse & touch. Drag or tap to lead it.
+    <div style="height:8px"></div>
+    <small style="opacity:0.85">Tip: adjust length & stiffness with controls.</small>
+  </div>
+
+  <div class="controls">
+    <label style="display:block;font-size:12px;margin-bottom:6px">Segments: <span id="segVal">28</span></label>
+    <input id="seg" class="range" type="range" min="6" max="80" value="28">
+    <div style="height:8px"></div>
+    <label style="display:block;font-size:12px;margin-bottom:6px">Stiffness: <span id="stiffVal">0.18</span></label>
+    <input id="stiff" class="range" type="range" min="0.02" max="0.7" step="0.01" value="0.18">
+  </div>
+
+  <div class="footer">Made with 🦟 physics & canvas — smooth on PC & mobile</div>
+
+  <script>
+    (function(){
+      const canvas = document.getElementById('cnv');
+      const ctx = canvas.getContext('2d', { alpha: true });
+      let DPR = Math.max(1, window.devicePixelRatio || 1);
+
+      function resize(){
+        DPR = Math.max(1, window.devicePixelRatio || 1);
+        canvas.width = Math.floor(window.innerWidth * DPR);
+        canvas.height = Math.floor(window.innerHeight * DPR);
+        canvas.style.width = window.innerWidth + 'px';
+        canvas.style.height = window.innerHeight + 'px';
+        ctx.setTransform(DPR,0,0,DPR,0,0);
+      }
+      window.addEventListener('resize', resize, {passive:true});
+      resize();
+
+      // Controls
+      const segRange = document.getElementById('seg');
+      const stiffRange = document.getElementById('stiff');
+      const segVal = document.getElementById('segVal');
+      const stiffVal = document.getElementById('stiffVal');
+
+      // Pointer
+      const pointer = {x: window.innerWidth/2, y: window.innerHeight/2, active:false};
+      function onPointerMove(e){
+        const p = e.touches ? e.touches[0] : e;
+        pointer.x = p.clientX;
+        pointer.y = p.clientY;
+        pointer.active = true;
+      }
+      function onPointerUp(){ pointer.active = false; }
+      window.addEventListener('mousemove', onPointerMove);
+      window.addEventListener('touchstart', onPointerMove, {passive:true});
+      window.addEventListener('touchmove', onPointerMove, {passive:true});
+      window.addEventListener('mouseup', onPointerUp);
+      window.addEventListener('touchend', onPointerUp);
+
+      // Centipede
+      let segments = [];
+      function palette(i,total){
+        const t = i/Math.max(1,total-1);
+        const hue = (220 + 240 * t) % 360;
+        const sat = 70 + 15*Math.sin(i*0.7);
+        const light = 45 + 10*Math.cos(i*0.3);
+        return `hsl(${hue} ${sat}% ${light}%)`;
+      }
+      function buildSegments(n){
+        segments = [];
+        const cx = window.innerWidth/2;
+        const cy = window.innerHeight/2;
+        for(let i=0;i<n;i++){
+          segments.push({
+            x:cx - i*12, y:cy + Math.sin(i*0.6)*6, vx:0, vy:0,
+            r:12 - Math.min(9, i*0.12),
+            color: palette(i,n)
+          });
+        }
+      }
+      buildSegments(parseInt(segRange.value,10));
+      segVal.textContent = segRange.value;
+      stiffVal.textContent = stiffRange.value;
+      segRange.addEventListener('input', ()=>{
+        const newN = parseInt(segRange.value,10);
+        segVal.textContent = newN;
+        buildSegments(newN);
+      });
+      stiffRange.addEventListener('input', ()=>{ stiffVal.textContent = stiffRange.value; });
+
+      // Draw body
+      function drawBody(shadow=false, glow=false){
+        const total = segments.length;
+        for(let i=0;i<total;i++){
+          const s = segments[i];
+          ctx.save();
+          ctx.translate(s.x, s.y);
+          const angle = (i>0) ? Math.atan2(segments[i].y - segments[i-1].y, segments[i].x - segments[i-1].x) : 0;
+          ctx.rotate(angle + Math.PI/2);
+          const segCol = s.color;
+
+          if(glow && (i % 5 === 0 || i === 0)){
+            ctx.shadowBlur = 20; ctx.shadowColor = segCol; ctx.globalAlpha = 0.22;
+          } else {
+            ctx.shadowBlur = 0; ctx.globalAlpha = shadow ? 0.85 : 1;
+          }
+
+          const w = Math.max(6, s.r*1.9);
+          const h = Math.max(6, s.r*1.2);
+          ctx.beginPath();
+          ctx.ellipse(0,0,w,h,0,0,Math.PI*2);
+          const lf = ctx.createLinearGradient(-w, -h, w, h);
+          lf.addColorStop(0,'rgba(255,255,255,0.06)');
+          lf.addColorStop(0.3, segCol);
+          lf.addColorStop(1,'rgba(0,0,0,0.12)');
+          ctx.fillStyle = lf; ctx.fill();
+          ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.stroke();
+
+          // draw legs only on every 2nd segment
+          if(i % 2 === 0){
+            const legLen = 6 + Math.sin(Date.now()*0.005 + i*0.3)*3;
+            ctx.beginPath();
+            ctx.moveTo(-w*0.6, 0);
+            ctx.lineTo(-w*0.6 - legLen, legLen*0.6);
+            ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(w*0.6, 0);
+            ctx.lineTo(w*0.6 + legLen, -legLen*0.6);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }
+
+      function drawHead(){
+        if(segments.length==0) return;
+        const h = segments[0];
+        const dir = (segments[1]) ? Math.atan2(segments[1].y - h.y, segments[1].x - h.x) : 0;
+        ctx.save();
+        ctx.translate(h.x, h.y);
+        ctx.rotate(dir + Math.PI);
+
+        // head ellipse
+        ctx.beginPath();
+        ctx.ellipse(0,0,18,14,0,0,Math.PI*2);
+        const grad = ctx.createLinearGradient(-18,-14,18,14);
+        grad.addColorStop(0,'hsl(200 70% 60%)');
+        grad.addColorStop(1,'hsl(260 60% 36%)');
+        ctx.fillStyle = grad; ctx.fill();
+        ctx.lineWidth = 1.8; ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.stroke();
+
+        // eyes
+        const eyeX = 6; const eyeY = -5;
+        ctx.beginPath(); ctx.ellipse(eyeX,eyeY,3,4,0,0,Math.PI*2); ctx.fillStyle='white'; ctx.fill();
+        ctx.beginPath(); ctx.ellipse(eyeX+1,eyeY,1.2,1.6,0,0,Math.PI*2); ctx.fillStyle='black'; ctx.fill();
+        ctx.beginPath(); ctx.ellipse(eyeX,-eyeY,3,4,0,0,Math.PI*2); ctx.fillStyle='white'; ctx.fill();
+        ctx.beginPath(); ctx.ellipse(eyeX+1,-eyeY,1.2,1.6,0,0,Math.PI*2); ctx.fillStyle='black'; ctx.fill();
+        ctx.restore();
+      }
+
+      // Simulation
+      function update(dt){
+        if(segments.length==0) return;
+        const stiffness = parseFloat(stiffRange.value);
+        const damping = 0.82;
+        const leadX = pointer.active ? pointer.x : window.innerWidth/2 + Math.sin(Date.now()*0.001)*80;
+        const leadY = pointer.active ? pointer.y : window.innerHeight/2 + Math.cos(Date.now()*0.001)*40;
+
+        const head = segments[0];
+        head.vx += (leadX - head.x) * (stiffness * 0.9) * dt;
+        head.vy += (leadY - head.y) * (stiffness * 0.9) * dt;
+        head.vx *= damping; head.vy *= damping;
+        head.x += head.vx * dt * 60;
+        head.y += head.vy * dt * 60;
+
+        for(let i=1;i<segments.length;i++){
+          const prev = segments[i-1], cur = segments[i];
+          const dx = prev.x - cur.x, dy = prev.y - cur.y;
+          const dist = Math.sqrt(dx*dx + dy*dy) || 0.0001;
+          const target = 14 + Math.sin(i*0.25 + Date.now()*0.003)*1.8;
+          const diff = (dist - target)/dist;
+          const moveX = dx * diff * stiffness * dt * 12;
+          const moveY = dy * diff * stiffness * dt * 12;
+          cur.x += moveX; cur.y += moveY;
+          cur.vx = (cur.vx||0) + moveX * 0.02;
+          cur.vy = (cur.vy||0) + moveY * 0.02;
+          cur.vx *= 0.95; cur.vy *= 0.95;
+          cur.x += cur.vx * dt * 60; cur.y += cur.vy * dt * 60;
+        }
+      }
+
+      function draw(){
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        drawBody(true); // shadow
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; drawBody(false,true); ctx.restore(); // glow
+        drawBody(false,false); // body
+        drawHead(); // head
+      }
+
+      // Loop with FPS cap
+      let last = performance.now();
+      const fps = 60, frameDuration = 1000/fps;
+      function loop(now){
+        if(now - last >= frameDuration){
+          const dt = Math.min(1/15, (now - last)/1000);
+          update(dt); draw(); last = now;
+        }
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+
+      // Double click/tap teleport
+      let lastTap = 0;
+      window.addEventListener('click',(e)=>{
+        const t = Date.now();
+        if(t - lastTap < 300 && segments.length){
+          segments[0].x = e.clientX; segments[0].y = e.clientY;
+          segments[0].vx = 0; segments[0].vy = 0;
+        }
+        lastTap = t;
+      });
+    })();
+  </script>
+</body>
+</html>
